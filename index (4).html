@@ -1,0 +1,220 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0f172a"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="BullScore"><title>BullScore – Decimal Target Scoring</title>
+<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<style>
+html,body{margin:0;background:#0f172a;color:#e2e8f0;overscroll-behavior:none;font-family:system-ui,-apple-system,sans-serif}
+body{padding-top:env(safe-area-inset-top)}#app{padding:12px 12px calc(76px + env(safe-area-inset-bottom))}
+nav{position:fixed;left:0;right:0;bottom:0;background:#1e293b;display:flex;border-top:1px solid #334155;padding-bottom:env(safe-area-inset-bottom);z-index:20}
+nav button{flex:1;padding:10px 0;font-size:11px;color:#94a3b8}nav button.on{color:#06b6d4}nav b{display:block;font-size:18px}
+canvas{touch-action:none;display:block}.c{background:#1e293b;border-radius:14px;padding:12px;margin-bottom:12px}
+.b{background:#334155;border-radius:10px;padding:9px 12px;font-size:14px;white-space:nowrap}.p{background:#06b6d4;color:#00222a;font-weight:600}.a{background:#f59e0b;color:#1c1000;font-weight:600}
+.r{background:#7f1d1d}input,select,textarea{background:#0f172a;border:1px solid #334155;border-radius:8px;padding:8px;width:100%;color:#e2e8f0;font-size:16px;margin:4px 0 8px}
+label{font-size:12px;color:#94a3b8}h2{font-weight:700;font-size:17px;margin-bottom:6px}.pill{background:#0f172a;border-radius:99px;padding:3px 9px;font-size:12px}
+</style></head><body><div id="app"></div>
+<nav id="nav"></nav>
+<input type="file" id="fc" accept="image/*" capture="environment" hidden><input type="file" id="fg" accept="image/*" hidden><input type="file" id="fr" accept="application/json" hidden>
+<script>
+const T={
+sfc:{n:'SFC 20-Yard Match Rifle (No. 134)',s:'20yd .22',cal:5.6,mark:37.56,dot:1,all:1,rmin:4,rng:18.288,sb:1,rg:[[10,.5],[9,6.1],[8,11.96],[7,17.81],[6,23.66],[5,29.51],[4,35.36],[3,41.22],[2,47.07],[1,52.92,1]]},
+ccm:{n:'CCM 10m Air Rifle (CCT2001AR853)',s:'10m .177',cal:4.5,d10:.5,w:2.5,mark:31,dot:1,rmin:4,rng:10,sb:0},
+air:{n:'ISSF 10m Air Rifle (10-Bull)',s:'10m .177',cal:4.5,d10:.5,w:2.5,dot:1,rmin:4,rng:10,sb:0},
+sm50:{n:'ISSF 50m Smallbore',s:'50m .22',cal:5.6,d10:10.4,w:8,rmin:3,rng:50,sb:1}};
+for(const k in T){const t=T[k];if(!t.rg){t.mark=t.mark||t.d10+2*(10-t.rmin)*t.w;t.rg=[];for(let j=10;j>=1;j--)t.rg.push([j,t.d10+2*(10-j)*t.w])}}
+const POS=[[0,0],[0,1],[0,2],[0,3],[1,0],[1,3],[2,0],[2,1],[2,2],[2,3],[1,1],[1,2]];
+const $=i=>document.getElementById(i),uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6),O=(a,f)=>a.map(f).join(''),
+esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])),fmt=v=>v.toFixed(1),
+today=()=>new Date(Date.now()-new Date().getTimezoneOffset()*6e4).toISOString().slice(0,10),
+dl=(d,o)=>new Date(d+'T12:00').toLocaleDateString('en-CA',o),lb=i=>i<10?i+1:'S'+(i-9);
+const S={tab:0,p:[],s:[],act:null,sid:null,ci:0,day:'all',open:null,an:{p:'',t:'',l:''}};
+const E={mode:'sheet',bi:0,tool:'plug',v:{x:0,y:0,k:1},src:null,sid:null,dpr:1,cw:300,ch:300};
+const sess=()=>S.s.find(x=>x.id===S.sid),prof=id=>S.p.find(p=>p.id===id);
+/* ---------- storage ---------- */
+let db;const open=()=>new Promise((r,j)=>{const q=indexedDB.open('bullscore',1);q.onupgradeneeded=()=>q.result.createObjectStore('d',{keyPath:'id'});q.onsuccess=()=>{db=q.result;r()};q.onerror=j});
+const put=o=>{try{db.transaction('d','readwrite').objectStore('d').put(o)}catch(e){console.error(e)}},del=id=>db.transaction('d','readwrite').objectStore('d').delete(id),
+all=()=>new Promise(r=>{const q=db.transaction('d').objectStore('d').getAll();q.onsuccess=()=>r(q.result)}),meta=()=>put({id:'meta',k:'m',act:S.act});
+/* ---------- scoring ---------- */
+function sc(t,d,sp=1){const B=t.rg.map(([k,x])=>[k,x/2*(k<10?sp:1)+t.cal/2]),tn=f=>Math.min(9,Math.floor(f*10+1e-9));
+if(d<=B[0][1])return(100+tn(1-d/B[0][1]))/10;
+for(let i=1;i<B.length;i++)if(d<=B[i][1])return(B[i][0]*10+tn((B[i][1]-d)/(B[i][1]-B[i-1][1])))/10;return 0}
+function shotInfo(t,c,i){const s=c.shots[i],b=c.bulls[i];if(!s||!b)return null;const dx=(s.x-b.x)/c.ppm,dy=(b.y-s.y)/c.ppm,d=Math.hypot(dx,dy);return{dx,dy,d,v:sc(t,d,c.sp||1)}}
+function cardTot(c,t){let v=0,n=0,x=0,ii=0;for(let i=0;i<10;i++){const q=shotInfo(t,c,i);if(q){v+=q.v;n++;ii+=Math.floor(q.v);if(q.v>=10.5)x++}}return{v:Math.round(v*10)/10,n,i:ii,x}}
+const sesTot=se=>{const t=T[se.t];return se.cards.reduce((a,c)=>{const q=cardTot(c,t);a.v+=q.v;a.n+=q.n;a.i+=q.i;a.x+=q.x;return a},{v:0,n:0,i:0,x:0})};
+const pts=se=>se.cards.flatMap(c=>{const t=T[se.t],o=[];for(let i=0;i<10;i++){const q=shotInfo(t,c,i);if(q)o.push(q)}return o});
+function grp(P){if(!P.length)return null;const mx=P.reduce((a,p)=>a+p.dx,0)/P.length,my=P.reduce((a,p)=>a+p.dy,0)/P.length;return{mx,my,r:P.reduce((a,p)=>a+Math.hypot(p.dx-mx,p.dy-my),0)/P.length}}
+const clab=(se,i)=>se.fmt==='cadet2'?['Prone','Standing'][i]||'C'+(i+1):'C'+(i+1);
+/* ---------- svg helpers ---------- */
+function cloud(P,t,z,adv){const R=t.mark/2,g=grp(P),sx=z/2/R;let h=`<svg viewBox="0 0 ${z} ${z}" width="${z}" height="${z}" style="background:#0f172a;border-radius:10px">`;
+h+=O(t.rg.filter(([k,d,hid])=>!hid&&d<=t.mark+.01&&!(t.dot&&k==10)),([k,d])=>`<circle cx="${z/2}" cy="${z/2}" r="${d/2*sx}" fill="none" stroke="#06b6d4" stroke-opacity=".45" stroke-width=".8"/>`);
+h+=O(P,p=>`<circle cx="${z/2+p.dx*sx}" cy="${z/2-p.dy*sx}" r="${Math.max(1.5,t.cal/2*sx)}" fill="#f59e0b" fill-opacity=".6"/>`);
+if(g)h+=`<path d="M${z/2+g.mx*sx-8} ${z/2-g.my*sx}h16M${z/2+g.mx*sx} ${z/2-g.my*sx-8}v16" stroke="#fff" stroke-width="1.5"/>`;return h+'</svg>'}
+function advice(P,t,se){const g=grp(P);if(!g)return'';const sr=+se.eq?.sr;let h=`<div class="text-sm">MPI: ${g.mx.toFixed(2)} / ${g.my.toFixed(2)} mm (x/y) · Mean group radius: <b class="text-amber-400">${g.r.toFixed(2)} mm</b></div>`;
+if(sr&&Math.hypot(g.mx,g.my)>.05){const f=sr/(t.rng*1000),x=-g.mx*f,y=-g.my*f;h+=`<div class="text-sm text-cyan-300">Move rear sight ${x>=0?'right':'left'} ${Math.abs(x).toFixed(3)} mm, ${y>=0?'up':'down'} ${Math.abs(y).toFixed(3)} mm (sight radius ${sr} mm)</div>`}else if(!sr)h+='<div class="text-xs text-slate-400">Add a sight radius to the equipment setup for click advice.</div>';return h}
+/* ---------- views ---------- */
+function render(){const v=[score,sessions,analytics,profiles][S.tab]();$('app').innerHTML=v;
+$('nav').innerHTML=O(['🎯 Score Card','📅 Sessions','📈 Analytics','👤 Profiles'],(n,i)=>`<button data-a="tab" data-i="${i}" class="${i==S.tab?'on':''}"><b>${n.slice(0,2)}</b>${n.slice(3)}</button>`);
+if(S.tab==0&&sess()&&sess().cards[S.ci]?.img)initCv()}
+const fmtOpts=k=>T[k].sb?'<option value=6>6-Card Match (60 shots)</option><option value=4>4-Card (40 shots)</option><option value=1>Single Card (10 shots)</option>':'<option value=1>Single Card (10 shots)</option><option value=cadet2>2-Card Cadet Match (10 Prone + 10 Standing)</option>';
+function addpForm(){return`<div class=c><h2>Create your first shooter profile</h2><p class="text-sm text-slate-400 mb-2">Add an athlete or cadet. You can add rifle and ammo setups later in Profiles.</p><input id=pn placeholder="Shooter name"><button data-a=addp class="b p w-full">Create profile</button></div>`}
+function score(){if(!S.p.length)return addpForm();const se=sess();if(!se){const p=prof(S.act)||S.p[0];
+return`<div class=c><h2>New session</h2><label>Shooter</label><select id=np data-a=pchg>${O(S.p,x=>`<option value=${x.id} ${x.id==p.id?'selected':''}>${esc(x.name)}</option>`)}</select>
+<label>Target</label><select id=nt onchange="$('nf').innerHTML=fmtOpts(this.value)">${O(Object.keys(T),k=>`<option value=${k}>${T[k].n}</option>`)}</select>
+<label>Format</label><select id=nf>${fmtOpts('sfc')}</select><label>Equipment / ammo lot</label><select id=ne><option value="">None</option>${O(p.eq,e=>`<option value=${e.id}>${esc(e.rifle)} · ${esc(e.lot)}</option>`)}</select>
+<label>Date</label><input type=date id=nd value="${today()}"><label>Notes</label><textarea id=nn rows=2 placeholder="Range conditions, position adjustments"></textarea>
+<button data-a=start class="b p w-full">Start scoring</button></div>`}
+const t=T[se.t],c=se.cards[S.ci],tot=sesTot(se);
+let h=`<div class=c><div class="flex justify-between items-start"><div><b>${esc(prof(se.pid)?.name)}</b> <span class=pill>${t.s}</span><div class="text-xs text-slate-400">${dl(se.date,{weekday:'short',month:'short',day:'numeric',year:'numeric'})}${se.eq?' · '+esc(se.eq.rifle)+' '+esc(se.eq.lot):''}</div></div><button data-a=done class=b>Close</button></div>
+<div class="flex gap-2 overflow-x-auto mt-2">${O(se.cards,(x,i)=>`<button data-a=ci data-i=${i} class="b ${i==S.ci?'p':''}">${clab(se,i)}: ${fmt(cardTot(x,t).v)}</button>`)}<button data-a=addc class=b>+ Add Another Card</button></div>
+<div class="mt-2 text-sm">Total <b class="text-cyan-400 text-xl">${fmt(tot.v)}</b> / ${fmt(se.cards.length*109)} · ${tot.i} · ${tot.x}X</div></div>`;
+if(!c.img)return h+`<div class=c><h2>${clab(se,S.ci)}: add a photo of the full sheet</h2><p class="text-sm text-slate-400 mb-2">Lay the sheet flat, shoot straight on in even light.</p><div class="flex gap-2"><button data-a=cam class="b p flex-1">📷 Take photo</button><button data-a=gal class="b flex-1">🖼 Gallery</button></div></div>`;
+const P=pts({...se,cards:[c]}),PA=pts(se);
+return h+`<div class=c style="padding:8px"><div style="position:relative"><canvas id=cv style="width:100%;height:52vh;background:#000;border-radius:10px"></canvas><canvas id=lp width=240 height=240 style="position:absolute;top:6px;left:6px;width:120px;height:120px;display:none;border:2px solid #f59e0b;border-radius:14px;pointer-events:none"></canvas></div>
+<div id=info class="text-sm my-2"></div>
+<div class="flex gap-2 overflow-x-auto"><button data-a=sheet class="b ${E.mode=='sheet'?'p':''}">Step A: Align</button><button data-a=nx data-d=-1 class=b>◀ Prev</button><button data-a=nx data-d=1 class=b>Next ▶</button>
+${O([['ring','Rings'],['plug','Plug'],['grid','Grid']],([k,n])=>`<button data-a=tl data-k=${k} class="b ${E.tool==k?'a':''}">${n}</button>`)}</div>
+<div class="flex gap-2 overflow-x-auto mt-2">${O([['0,-1','↑'],['0,1','↓'],['-1,0','←'],['1,0','→']],([d,n])=>`<button data-a=nu data-d="${d}" class=b>${n}</button>`)}<button data-a=sc data-d=.98 class=b>Scale −</button><button data-a=sc data-d=1.02 class=b>Scale +</button><button data-a=dt class=b>Re-detect sheet</button><button data-a=dh class=b>Detect hole</button><button data-a=cam class=b>📷 Retake</button><button data-a=gal class=b>🖼</button></div>
+<div class="grid grid-cols-2 gap-3 mt-3 text-xs"><div><label>Ring Scale <b id=rv>${Math.round(100*c.ppm/(c.ppm0||c.ppm||1))||100}%</b></label><input type=range min=70 max=130 value="${Math.round(100*c.ppm/(c.ppm0||c.ppm||1))||100}" style="padding:0" oninput="rsl(this.value)" onchange="save();render()"></div>
+<div><label>Ring Spacing <b id=sv>${Math.round(100*(c.sp||1))}%</b></label><input type=range min=85 max=115 value="${Math.round(100*(c.sp||1))}" style="padding:0" oninput="spl(this.value)" onchange="save();render()"></div></div></div>
+<div class=c><h2>Shot cloud</h2><div class="flex gap-3 items-start">${cloud(P,t,150)}<div class="space-y-1">${advice(P,t,se)}</div></div>${se.cards.length>1?`<div class="text-xs text-slate-400 mt-3">All cards</div><div class="flex gap-3">${cloud(PA,t,110)}<div>${advice(PA,t,se)}</div></div>`:''}</div>
+<div class=c><h2>Shots</h2><div class="grid grid-cols-5 gap-1 text-center text-sm">${O([...Array(10).keys()],i=>{const q=shotInfo(t,c,i);return`<button data-a=fc data-i=${i} class=b style="padding:6px 2px">${i+1}<br><b class="${q&&q.v>=10.5?'text-amber-400':''}">${q?fmt(q.v):'–'}</b></button>`})}</div></div>`}
+function sessions(){const days=[...new Set(S.s.map(s=>s.date))].sort().reverse();
+if(!days.length)return`<div class=c><h2>No sessions yet</h2><p class="text-sm text-slate-400">Scored cards appear here by date. Start one in the Score Card tab.</p></div>`;
+const cnt=d=>S.s.filter(s=>s.date==d).reduce((a,s)=>a+s.cards.filter(c=>cardTot(c,T[s.t]).n).length,0);
+let h=`<div class="flex gap-2 overflow-x-auto pb-2 mb-2"><button data-a=day data-d=all class="b ${S.day=='all'?'p':''}">Show All Dates</button>${O(days,d=>`<button data-a=day data-d=${d} class="b ${S.day==d?'p':''}">${dl(d,{month:'short',day:'numeric'})} <span class=pill>${cnt(d)}</span></button>`)}</div>`;
+return h+O(S.day=='all'?days:[S.day],d=>{const L=S.s.filter(s=>s.date==d),hi=Math.max(0,...L.flatMap(s=>s.cards.map(c=>cardTot(c,T[s.t]).v)));
+return`<div class="text-sm font-semibold text-slate-300 my-2">${dl(d,{weekday:'long',month:'short',day:'numeric',year:'numeric'})} — Daily High: ${fmt(hi)}</div>`+O(L,s=>{const t=T[s.t],q=sesTot(s),op=S.open==s.id;
+return`<div class=c><div data-a=op data-i=${s.id}><div class="flex justify-between"><div><span class=pill>${t.s}</span> <b>${esc(prof(s.pid)?.name)}</b><div class="text-xs text-slate-400">${s.eq?esc(s.eq.rifle)+' · '+esc(s.eq.lot):'No equipment'}</div></div><div class=text-right><div class="text-3xl font-bold text-cyan-400">${fmt(q.v)}</div><div class="text-xs">${q.i} · ${q.x}X</div></div></div>
+<div class="flex gap-1 flex-wrap my-2">${O(s.cards,(c,i)=>`<span class=pill>${clab(s,i)}: ${fmt(cardTot(c,t).v)}</span>`)}</div>${cloud(pts(s),t,90)}</div>
+${op?`<div class="mt-2 text-sm">${s.notes?`<p class="text-slate-400 mb-2">${esc(s.notes)}</p>`:''}${O(s.cards,(c,ci)=>`<div class="mb-2"><b>${clab(s,ci)}</b> ${O([...Array(10).keys()],i=>{const x=shotInfo(t,c,i);return`<span class=pill>${i+1}: ${x?fmt(x.v):'–'}</span> `})}</div>`)}<div class="flex gap-2"><button data-a=edit data-i=${s.id} class="b p">Open / edit rings</button><button data-a=dels data-i=${s.id} class="b r">Delete</button></div></div>`:''}</div>`})})}
+function analytics(){const f=S.an,lots=[...new Set(S.s.map(s=>s.eq?.lot).filter(Boolean))];
+const L=S.s.filter(s=>(!f.p||s.pid==f.p)&&(!f.t||s.t==f.t)&&(!f.l||s.eq?.lot==f.l)&&sesTot(s).n).sort((a,b)=>a.date<b.date?-1:1);
+const sel=(k,o)=>`<select data-a=flt data-k=${k} style="width:auto">${o}</select>`;
+let h=`<div class="c flex gap-2 flex-wrap">${sel('p','<option value="">All shooters</option>'+O(S.p,p=>`<option value=${p.id} ${f.p==p.id?'selected':''}>${esc(p.name)}</option>`))}${sel('t','<option value="">All targets</option>'+O(Object.keys(T),k=>`<option value=${k} ${f.t==k?'selected':''}>${T[k].s}</option>`))}${sel('l','<option value="">All ammo lots</option>'+O(lots,l=>`<option ${f.l==l?'selected':''}>${esc(l)}</option>`))}</div>`;
+if(!L.length)return h+'<div class=c><h2>No scored shots match</h2><p class="text-sm text-slate-400">Score a card, or loosen the filters. Mixing disciplines is blocked on purpose: filter one target at a time for clean trends.</p></div>';
+const avg=L.map(s=>sesTot(s).v/sesTot(s).n),rad=L.map(s=>grp(pts(s)).r),W=320,H=120;
+const ln=(v,col)=>{const mx=Math.max(...v),mn=Math.min(...v),xy=v.map((a,i)=>[v.length>1?10+i*(W-20)/(v.length-1):W/2,H-10-(a-mn)/((mx-mn)||1)*(H-20)]);return`<polyline fill=none stroke="${col}" stroke-width=2 points="${xy.map(p=>p.join(',')).join(' ')}"/>`+O(xy,p=>`<circle cx=${p[0]} cy=${p[1]} r=3 fill="${col}"/>`)};
+h+=`<div class=c><h2>Trend by date</h2><svg viewBox="0 0 ${W} ${H}" class="w-full">${ln(avg,'#06b6d4')}${ln(rad,'#f59e0b')}</svg><div class="text-xs"><span class=text-cyan-400>● Avg shot ${avg[avg.length-1].toFixed(2)}</span> <span class=text-amber-400>● Mean radius ${rad[rad.length-1].toFixed(2)} mm</span> (latest) · ${dl(L[0].date,{month:'short',day:'numeric'})} → ${dl(L[L.length-1].date,{month:'short',day:'numeric'})}</div></div>`;
+const bars=(v,lab,col)=>{const m=Math.max(...v,1),bw=W/v.length;return`<svg viewBox="0 0 ${W} ${H+16}" class="w-full">${O(v,(a,i)=>`<rect x=${i*bw+4} y=${H-a/m*(H-14)} width=${bw-8} height=${a/m*(H-14)} fill="${col}" rx=3 /><text x=${i*bw+bw/2} y=${H-a/m*(H-14)-3} fill="#e2e8f0" font-size=9 text-anchor=middle>${a%1?a.toFixed(1):a}</text><text x=${i*bw+bw/2} y=${H+12} fill="#94a3b8" font-size=9 text-anchor=middle>${lab[i]}</text>`)}</svg>`};
+const mc=Math.max(...L.map(s=>s.cards.length)),st=[...Array(mc).keys()].map(i=>{const a=L.filter(s=>s.cards[i]&&cardTot(s.cards[i],T[s.t]).n).map(s=>cardTot(s.cards[i],T[s.t]).v);return a.length?a.reduce((x,y)=>x+y,0)/a.length:0});
+h+=`<div class=c><h2>String breakdown (avg per card)</h2>${bars(st,st.map((_,i)=>L.some(s=>s.fmt=='cadet2')&&mc==2?['Prone','Standing'][i]:'C'+(i+1)),'#06b6d4')}</div>`;
+const bn=[0,0,0,0];L.forEach(s=>pts(s).forEach(p=>bn[p.v>=10.5?0:p.v>=10?1:p.v>=9.5?2:3]++));
+return h+`<div class=c><h2>Score distribution</h2>${bars(bn,['10.5+','10.0–10.4','9.5–9.9','<9.5'],'#f59e0b')}</div>`}
+function profiles(){return`<div class=c><h2>Shooter profiles</h2><div class=flex><input id=pn placeholder="New shooter name"><button data-a=addp class="b p ml-2" style="margin-bottom:8px">Add</button></div></div>`+
+O(S.p,p=>`<div class=c><div class="flex justify-between items-center"><b>${esc(p.name)} ${p.id==S.act?'<span class=pill>Active</span>':''}</b><div class="flex gap-1"><button data-a=act data-i=${p.id} class=b>Use</button><button data-a=ren data-i=${p.id} class=b>Edit</button><button data-a=delp data-i=${p.id} class="b r">✕</button></div></div>
+<div class="text-sm mt-2">${O(p.eq,e=>`<div class="flex justify-between py-1 border-b border-slate-700"><span>${esc(e.rifle)} · SR ${esc(e.sr)} mm · ${esc(e.lot)}</span><span><button data-a=eqe data-p=${p.id} data-i=${e.id}>✎</button> <button data-a=eqd data-p=${p.id} data-i=${e.id}>✕</button></span></div>`)}<button data-a=eqa data-i=${p.id} class="b mt-2">+ Equipment setup</button></div></div>`)+
+`<div class=c><h2>Backup</h2><div class="grid grid-cols-2 gap-2"><button data-a=exj class=b>Export JSON</button><button data-a=imj class=b>Restore JSON</button><button data-a=exc class="b col-span-2">Export history CSV</button></div><p class="text-xs text-slate-400 mt-2">Everything is stored on this device in IndexedDB, and works offline.</p></div>`}
+/* ---------- canvas editor ---------- */
+function initCv(){const cv=$('cv'),r=cv.getBoundingClientRect(),d=E.dpr=devicePixelRatio||1;cv.width=r.width*d;cv.height=r.height*d;E.cw=r.width;E.ch=r.height;ptr(cv);const c=sess().cards[S.ci];
+if(E.sid!==c.id){E.sid=c.id;E.mode='sheet';E.src=null;const im=new Image;im.onload=()=>{E.src=im;fitSheet();if(!c.bulls.length){autoSheet(c,T[sess().t]);save()}draw();updInfo()};im.src=c.img}else{draw();updInfo()}}
+function fitSheet(){const k=Math.min(E.cw/E.src.naturalWidth,E.ch/E.src.naturalHeight);E.v={k,x:(E.cw-E.src.naturalWidth*k)/2,y:(E.ch-E.src.naturalHeight*k)/2}}
+function fitBull(){const c=sess().cards[S.ci],t=T[sess().t],b=c.bulls[E.bi],k=Math.min(E.cw,E.ch)/2/(t.mark/2*c.ppm*1.15);E.v={k,x:E.cw/2-b.x*k,y:E.ch/2-b.y*k}}
+function draw(){const cv=$('cv');if(!cv||!E.src)return;const g=cv.getContext('2d'),se=sess(),t=T[se.t],c=se.cards[S.ci],d=E.dpr,v=E.v;
+g.setTransform(1,0,0,1,0,0);g.fillStyle='#000';g.fillRect(0,0,cv.width,cv.height);g.setTransform(d*v.k,0,0,d*v.k,d*v.x,d*v.y);g.drawImage(E.src,0,0);
+c.bulls.forEach((b,i)=>{const bm=E.mode=='bull';if(bm&&i!=E.bi)return;const cur=bm||E.tool=='grid';g.strokeStyle=i>9?'#06b6d488':'#06b6d4';g.lineWidth=(cur?1.6:1.1)/v.k;
+const sp=c.sp||1;t.rg.forEach(([k,dm,hid])=>{if(hid||(!t.all&&dm>t.mark+.01))return;g.beginPath();if(t.dot&&k==10){g.fillStyle='#06b6d4';g.arc(b.x,b.y,Math.max(dm/2*c.ppm,1.5/v.k),0,7);g.fill();return}g.arc(b.x,b.y,dm/2*(k<10?sp:1)*c.ppm,0,7);g.stroke()});
+if(t.all){g.save();g.setLineDash([4/v.k,4/v.k]);g.beginPath();g.arc(b.x,b.y,t.mark/2*c.ppm,0,7);g.stroke();g.restore()}
+g.fillStyle='#06b6d4';g.font=`bold ${Math.max(12/v.k,t.mark*c.ppm*.12)}px sans-serif`;g.fillText(lb(i),b.x-t.mark/2*c.ppm,b.y-t.mark/2*c.ppm-3/v.k);
+const s=c.shots[i];if(s){g.strokeStyle='#f59e0b';g.lineWidth=2/v.k;g.beginPath();g.arc(s.x,s.y,t.cal/2*c.ppm,0,7);g.moveTo(s.x-5/v.k,s.y);g.lineTo(s.x+5/v.k,s.y);g.moveTo(s.x,s.y-5/v.k);g.lineTo(s.x,s.y+5/v.k);g.stroke()}})}
+function rsl(v){const c=sess().cards[S.ci];c.ppm0=c.ppm0||c.ppm;c.ppm=c.ppm0*v/100;$('rv').textContent=v+'%';draw();updInfo()}
+function spl(v){const c=sess().cards[S.ci];c.sp=v/100;$('sv').textContent=v+'%';draw();updInfo()}
+function updInfo(){const el=$('info');if(!el)return;const se=sess(),t=T[se.t],c=se.cards[S.ci];if(E.mode!='bull'){el.innerHTML=(c.rep?c.rep+' ':'')+'Check the rings, then <button data-a=nx data-d=1 class="b p">Score Bull 1 ▶</button> <span class=text-slate-400>Drag a ring or use Grid to move all.</span>';return}
+const q=shotInfo(t,c,E.bi);el.innerHTML=`Bull ${lb(E.bi)}: <b class="text-amber-400 text-2xl">${q?fmt(q.v):'–'}</b> ${q&&q.v>=10.5?'<b>X</b>':''} <span class=text-slate-400>dx ${q?q.dx.toFixed(2):'–'} · dy ${q?q.dy.toFixed(2):'–'} mm</span>`}
+function ptr(cv){const P=new Map;let tg,mv,tap,last;const rp=e=>{const r=cv.getBoundingClientRect();return{x:e.clientX-r.left,y:e.clientY-r.top}},
+pi=()=>{const a=[...P.values()];return{d:Math.hypot(a[0].x-a[1].x,a[0].y-a[1].y)||1,cx:(a[0].x+a[1].x)/2,cy:(a[0].y+a[1].y)/2}};
+cv.onpointerdown=e=>{cv.setPointerCapture(e.pointerId);const p=rp(e);P.set(e.pointerId,p);mv=0;tg=null;tap=null;if(P.size==2){last=pi();return}if(!E.src)return;
+const se=sess(),t=T[se.t],c=se.cards[S.ci],ix=(p.x-E.v.x)/E.v.k,iy=(p.y-E.v.y)/E.v.k;
+if(E.mode=='bull')tg=E.tool=='plug'?{k:'plug',i:E.bi}:E.tool=='ring'?{k:'ring',i:E.bi}:{k:'grid'};
+else if(E.tool=='grid')tg={k:'grid'};else{const i=c.bulls.findIndex(b=>Math.hypot(b.x-ix,b.y-iy)<t.mark/2*c.ppm);if(i>=0){tg={k:'ring',i};tap=i}}};
+cv.onpointermove=e=>{if(!P.has(e.pointerId))return;const p=rp(e),o=P.get(e.pointerId);P.set(e.pointerId,p);mv+=Math.abs(p.x-o.x)+Math.abs(p.y-o.y);const v=E.v;
+if(P.size==2){const n=pi(),k=Math.min(60,Math.max(.03,v.k*n.d/last.d)),ix=(last.cx-v.x)/v.k,iy=(last.cy-v.y)/v.k;v.k=k;v.x=n.cx-ix*k;v.y=n.cy-iy*k;last=n;draw();return}
+const dx=p.x-o.x,dy=p.y-o.y;if(tg&&mv>4){mvT(tg,dx/v.k,dy/v.k);loupe(p)}else if(!tg){v.x+=dx;v.y+=dy}draw();updInfo()};
+cv.onpointerup=cv.onpointercancel=e=>{P.delete(e.pointerId);$('lp').style.display='none';if(P.size)return;
+if(mv<6&&tap!=null&&E.mode=='sheet')focus(tap);else if(tg&&mv>=4){save();render()}}}
+function mvT(tg,dx,dy){const c=sess().cards[S.ci];if(tg.k=='grid'){c.bulls.forEach(b=>{b.x+=dx;b.y+=dy});c.shots.forEach(s=>{if(s){s.x+=dx;s.y+=dy}})}
+else if(tg.k=='ring'){c.bulls[tg.i].x+=dx;c.bulls[tg.i].y+=dy}else{const s=c.shots[tg.i]||(c.shots[tg.i]={x:c.bulls[tg.i].x,y:c.bulls[tg.i].y});s.x+=dx;s.y+=dy}}
+function loupe(p){const lp=$('lp'),cv=$('cv'),d=E.dpr;lp.style.display='block';lp.style.left=p.x>E.cw/2?'6px':'auto';lp.style.right=p.x>E.cw/2?'auto':'6px';
+const g=lp.getContext('2d'),s=48*d;g.drawImage(cv,(p.x-24)*d,(p.y-24)*d,s,s,0,0,240,240);g.strokeStyle='#fff8';g.beginPath();g.moveTo(120,100);g.lineTo(120,140);g.moveTo(100,120);g.lineTo(140,120);g.stroke()}
+const save=()=>put(sess());
+function focus(i){const c=sess().cards[S.ci],t=T[sess().t];E.mode='bull';E.bi=i;E.tool='plug';if(!c.shots[i])c.shots[i]={x:c.bulls[i].x,y:c.bulls[i].y};fitBull();save();render()}
+/* ---------- detection ---------- */
+function blobs(d,w,h,f){const v=new Uint8Array(w*h),o=[];for(let s=0;s<w*h;s++){if(v[s]||!f(d,s*4))continue;const st=[s];let a=0,sx=0,sy=0,x0=w,x1=0,y0=h,y1=0;v[s]=1;
+while(st.length){const p=st.pop(),x=p%w,y=p/w|0;a++;sx+=x;sy+=y;x<x0&&(x0=x);x>x1&&(x1=x);y<y0&&(y0=y);y>y1&&(y1=y);
+for(const q of[x>0?p-1:-1,x<w-1?p+1:-1,p-w,p+w]){if(q<0||q>=w*h||v[q])continue;if(f(d,q*4)){v[q]=1;st.push(q)}}}o.push({a,x:sx/a,y:sy/a,w:x1-x0+1,h:y1-y0+1})}return o}
+function findBulls(gr,w,h){const N=w*h,I=new Float64Array((w+1)*(h+1)),W1=w+1;
+for(let y=0;y<h;y++){let r=0;for(let x=0;x<w;x++){r+=gr[y*w+x];I[(y+1)*W1+x+1]=I[y*W1+x+1]+r}}
+const R=Math.round(w*.12),M=new Uint8Array(N);
+for(let y=0;y<h;y++){const y0=Math.max(0,y-R),y1=Math.min(h,y+R+1);for(let x=0;x<w;x++){const x0=Math.max(0,x-R),x1=Math.min(w,x+R+1),m=(I[y1*W1+x1]-I[y0*W1+x1]-I[y1*W1+x0]+I[y0*W1+x0])/((x1-x0)*(y1-y0)),v=gr[y*w+x];M[y*w+x]=v<m*.72&&v<160?1:0}}
+const V=new Uint8Array(N),out=[];
+for(let s=0;s<N;s++){if(!M[s]||V[s])continue;const st=[s],px=[];V[s]=1;let x0=w,x1=0,y0=h,y1=0;
+while(st.length){const p=st.pop(),x=p%w,y=(p/w)|0;px.push(p);x<x0&&(x0=x);x>x1&&(x1=x);y<y0&&(y0=y);y>y1&&(y1=y);
+for(const[q,ok]of[[p-1,x>0],[p+1,x<w-1],[p-w,y>0],[p+w,y<h-1]])if(ok&&M[q]&&!V[q]){V[q]=1;st.push(q)}}
+const bw=x1-x0+1,bh=y1-y0+1;if(px.length<150||bw>w*.4||bh>h*.4||bw/bh<.8||bw/bh>1.25)continue;
+const sw=bw+2,sh=bh+2,F=new Uint8Array(sw*sh);px.forEach(p=>{F[((p/w|0)-y0+1)*sw+(p%w)-x0+1]=1});
+const b=[0];F[0]=2;while(b.length){const p=b.pop(),x=p%sw,y=(p/sw)|0;for(const[q,ok]of[[p-1,x>0],[p+1,x<sw-1],[p-sw,y>0],[p+sw,y<sh-1]])if(ok&&F[q]===0){F[q]=2;b.push(q)}}
+let A=0,sx=0,sy=0,P=0;for(let i=0;i<F.length;i++)if(F[i]!==2){A++;sx+=i%sw;sy+=(i/sw)|0;if(F[i-1]===2||F[i+1]===2||F[i-sw]===2||F[i+sw]===2)P++}
+const circ=4*Math.PI*A/(P*P),fill=A/(bw*bh);
+if(circ>.72&&fill>.66&&fill<.9)out.push({x:x0-1+sx/A,y:y0-1+sy/A,A,d:2*Math.sqrt(A/Math.PI)})}
+out.sort((a,b)=>b.A-a.A);let top=out.slice(0,12);if(top.length<4)return null;const md=top.map(z=>z.d).sort((a,b)=>a-b)[top.length>>1];
+top=top.filter(z=>z.d>md*.75&&z.d<md*1.3);return{top,md:top.map(z=>z.d).sort((a,b)=>a-b)[top.length>>1]}}
+function layout(top,md){if(top.length<4)return null;const s=[...top].sort((a,b)=>a.x-b.x),cl=[[s[0]]];
+for(let i=1;i<s.length;i++)s[i].x-s[i-1].x>md*.7?cl.push([s[i]]):cl[cl.length-1].push(s[i]);if(cl.length!=3)return null;cl.forEach((a,ci)=>a.forEach(z=>z.c=ci));
+const df=[];cl.forEach(a=>{a.sort((p,q)=>p.y-q.y);for(let i=1;i<a.length;i++)if(a[i].y-a[i-1].y>md*.8)df.push(a[i].y-a[i-1].y)});if(!df.length)return null;
+const pit=Math.min(...df),Y0=Math.min(...top.map(z=>z.y)),cell={};
+for(const z of top){const r=Math.round((z.y-Y0)/pit);if(r>3)return null;z.r=r;const k=z.c+','+r;if(!cell[k]||cell[k].A<z.A)cell[k]=z}
+const P=Object.values(cell),AT=[[0,0,0],[0,0,0],[0,0,0]],bx=[0,0,0],by=[0,0,0];
+for(const z of P){const v=[1,z.c,z.r];for(let i=0;i<3;i++){for(let j=0;j<3;j++)AT[i][j]+=v[i]*v[j];bx[i]+=v[i]*z.x;by[i]+=v[i]*z.y}}
+const det=m=>m[0][0]*(m[1][1]*m[2][2]-m[1][2]*m[2][1])-m[0][1]*(m[1][0]*m[2][2]-m[1][2]*m[2][0])+m[0][2]*(m[1][0]*m[2][1]-m[1][1]*m[2][0]),D=det(AT);if(Math.abs(D)<1e-6)return null;
+const sol=b=>[0,1,2].map(k=>det(AT.map((row,i)=>row.map((v,j)=>j==k?b[i]:v)))/D),ax=sol(bx),ay=sol(by);let found=0,inf=0;
+const bulls=POS.map(([c,r],i)=>{const z=cell[c+','+r];if(z){if(i<10)found++;return{x:z.x,y:z.y}}if(i<10)inf++;return{x:ax[0]+ax[1]*c+ax[2]*r,y:ay[0]+ay[1]*c+ay[2]*r}});return{bulls,found,inf}}
+function autoSheet(c,t){const im=E.src,iw=im.naturalWidth,ih=im.naturalHeight,w=Math.min(800,iw),f=iw/w,h=Math.round(ih/f),q=document.createElement('canvas');q.width=w;q.height=h;const g=q.getContext('2d');g.drawImage(im,0,0,w,h);
+const D=g.getImageData(0,0,w,h).data,gr=new Float32Array(w*h);for(let i=0;i<w*h;i++)gr[i]=.299*D[i*4]+.587*D[i*4+1]+.114*D[i*4+2];
+const r=findBulls(gr,w,h),L=r&&layout(r.top,r.md);
+if(L){c.ppm=r.md*f/t.mark;c.bulls=L.bulls.map(b=>({x:b.x*f,y:b.y*f}));c.rep=`Rings snapped to ${L.found} of 10 bulls${L.inf?` (${L.inf} inferred from the grid)`:''}.`;c.auto=true}
+else{const xs=[iw/6,iw/2,iw*5/6],ys=[.125,.375,.625,.875].map(a=>a*ih);c.ppm=.55*Math.min(iw/3,ih/4)/t.mark;c.bulls=POS.map(([a,b])=>({x:xs[a],y:ys[b]}));c.rep='Could not find the black marks. Use the Grid tool to drag the rings into place, then adjust Ring Scale.';c.auto=false}
+c.shots=Array(12).fill(null);c.ppm0=c.ppm;c.sp=1}
+function hole(c,t,i){const b=c.bulls[i],R=t.mark/2*c.ppm*.92,s=Math.ceil(R),x0=Math.max(0,Math.floor(b.x-s)),y0=Math.max(0,Math.floor(b.y-s)),w=Math.min(E.src.naturalWidth-x0,2*s),h=Math.min(E.src.naturalHeight-y0,2*s);if(w<5||h<5)return null;
+const q=document.createElement('canvas');q.width=w;q.height=h;const g=q.getContext('2d');g.drawImage(E.src,x0,y0,w,h,0,0,w,h);const cp=t.cal*c.ppm;
+const z=blobs(g.getImageData(0,0,w,h).data,w,h,(d,j)=>(d[j]+d[j+1]+d[j+2])/3>170).filter(z=>z.w>cp*.5&&z.w<cp*1.8&&z.h>cp*.5&&z.h<cp*1.8&&Math.hypot(z.x+x0-b.x,z.y+y0-b.y)<R).sort((a,b)=>b.a-a.a)[0];return z?{x:z.x+x0,y:z.y+y0}:null}
+/* ---------- photos ---------- */
+function onFile(f){if(!f)return;const r=new FileReader;r.onload=()=>{const im=new Image;im.onload=()=>{const k=Math.min(1,1600/Math.max(im.width,im.height)),q=document.createElement('canvas');q.width=im.width*k;q.height=im.height*k;q.getContext('2d').drawImage(im,0,0,q.width,q.height);
+const c=sess().cards[S.ci];c.img=q.toDataURL('image/jpeg',.75);c.bulls=[];c.shots=Array(12).fill(null);c.ppm=0;E.sid=null;save();render()};im.src=r.result};r.readAsDataURL(f)}
+['fc','fg'].forEach(i=>$(i).onchange=e=>{onFile(e.target.files[0]);e.target.value=''});
+/* ---------- actions ---------- */
+const newCard=()=>({id:uid(),img:null,ppm:0,bulls:[],shots:Array(12).fill(null)}),dl2=(n,m,txt)=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([txt],{type:m}));a.download=n;a.click()};
+const A={tab:d=>{S.tab=+d.i;render()},
+addp(){const n=$('pn').value.trim();if(!n)return;const p={id:uid(),k:'p',name:n,eq:[]};S.p.push(p);S.act=p.id;put(p);meta();render()},
+pchg(d,el){S.act=el.value;meta();render()},
+start(){const p=prof($('np').value),tk=$('nt').value,f=$('nf').value,e=p.eq.find(x=>x.id==$('ne').value),n=f=='cadet2'?2:+f;
+const se={id:uid(),k:'s',date:$('nd').value||today(),pid:p.id,t:tk,fmt:f,eq:e?{rifle:e.rifle,sr:e.sr,lot:e.lot}:null,notes:$('nn').value,cards:Array.from({length:n},newCard)};S.s.push(se);put(se);S.sid=se.id;S.ci=0;E.sid=null;render()},
+done(){S.sid=null;E.sid=null;render()},ci(d){S.ci=+d.i;E.sid=null;render()},
+addc(){const se=sess();se.cards.push(newCard());S.ci=se.cards.length-1;E.sid=null;save();render()},
+cam(){$('fc').click()},gal(){$('fg').click()},sheet(){E.mode='sheet';E.tool='ring';fitSheet();render()},
+nx(d){const c=sess().cards[S.ci];if(!c.bulls.length)return;focus(E.mode=='bull'?(E.bi+ +d.d+10)%10:0)},fc(d){focus(+d.i)},
+tl(d){E.tool=d.k;render()},
+nu(d){const[x,y]=d.d.split(',').map(Number),c=sess().cards[S.ci];if(!c.bulls.length)return;mvT(E.mode=='bull'?{k:E.tool=='ring'?'ring':E.tool=='grid'?'grid':'plug',i:E.bi}:{k:'grid'},x,y);save();draw();updInfo()},
+sc(d){const c=sess().cards[S.ci];c.ppm*=+d.d;if(E.mode=='bull')fitBull();save();render()},
+dt(){const c=sess().cards[S.ci];autoSheet(c,T[sess().t]);E.mode='sheet';fitSheet();save();render()},
+dh(){const c=sess().cards[S.ci],t=T[sess().t];if(E.mode!='bull')return;const h=hole(c,t,E.bi);if(h)c.shots[E.bi]=h;else alert('No clear hole found in this bull. Drag the plug circle onto the hole.');save();render()},
+day(d){S.day=d.d;render()},op(d){S.open=S.open==d.i?null:d.i;render()},
+edit(d){S.sid=d.i;S.ci=0;E.sid=null;S.tab=0;render()},dels(d){if(confirm('Delete this session?')){del(d.i);S.s=S.s.filter(s=>s.id!=d.i);render()}},
+flt(d,el){S.an[d.k]=el.value;render()},act(d){S.act=d.i;meta();render()},
+ren(d){const p=prof(d.i),n=prompt('Shooter name',p.name);if(n){p.name=n.trim();put(p);render()}},
+delp(d){if(confirm('Delete profile (sessions are kept)?')){del(d.i);S.p=S.p.filter(p=>p.id!=d.i);if(S.act==d.i)S.act=S.p[0]?.id;meta();render()}},
+eqa(d){eqEdit(prof(d.i),{id:uid(),rifle:'',sr:'',lot:''},1)},eqe(d){const p=prof(d.p);eqEdit(p,p.eq.find(e=>e.id==d.i))},eqd(d){const p=prof(d.p);p.eq=p.eq.filter(e=>e.id!=d.i);put(p);render()},
+exj(){dl2('bullscore-backup-'+today()+'.json','application/json',JSON.stringify({v:1,profiles:S.p,sessions:S.s,act:S.act}))},imj(){$('fr').click()},
+exc(){const r=[['date','shooter','target','rifle','sight_radius_mm','ammo_lot','card','bull','score','dx_mm','dy_mm','inner_ten']];S.s.forEach(s=>{const t=T[s.t];s.cards.forEach((c,ci)=>{for(let i=0;i<10;i++){const q=shotInfo(t,c,i);if(q)r.push([s.date,prof(s.pid)?.name,t.n,s.eq?.rifle,s.eq?.sr,s.eq?.lot,clab(s,ci),i+1,fmt(q.v),q.dx.toFixed(2),q.dy.toFixed(2),q.v>=10.5?1:0])}})});
+dl2('bullscore-history.csv','text/csv',r.map(x=>x.map(v=>'"'+String(v??'').replace(/"/g,'""')+'"').join(',')).join('\n'))}};
+function eqEdit(p,e,isNew){const r=prompt('Rifle name',e.rifle);if(r===null)return;const sr=prompt('Sight radius (mm)',e.sr);if(sr===null)return;const l=prompt('Ammo lot / pellet batch',e.lot);if(l===null)return;Object.assign(e,{rifle:r,sr,lot:l});if(isNew)p.eq.push(e);put(p);render()}
+$('fr').onchange=async e=>{try{const j=JSON.parse(await e.target.files[0].text());if(!confirm('Restore backup? Items with the same id are overwritten.'))return;
+for(const p of j.profiles||[]){p.k='p';put(p);S.p=S.p.filter(x=>x.id!=p.id).concat(p)}for(const s of j.sessions||[]){s.k='s';put(s);S.s=S.s.filter(x=>x.id!=s.id).concat(s)}S.act=j.act||S.act;meta();render()}catch(x){alert('That file is not a valid BullScore backup.')}e.target.value=''};
+document.addEventListener('click',e=>{const el=e.target.closest('[data-a]');if(el&&el.tagName!='SELECT'&&A[el.dataset.a])A[el.dataset.a](el.dataset,el,e)});
+document.addEventListener('change',e=>{const el=e.target.closest('select[data-a]');if(el)A[el.dataset.a](el.dataset,el,e)});
+/* ---------- PWA ---------- */
+function pwa(){const ic=n=>{const c=document.createElement('canvas');c.width=c.height=n;const g=c.getContext('2d');g.fillStyle='#0f172a';g.fillRect(0,0,n,n);g.strokeStyle='#06b6d4';g.lineWidth=n/32;[.38,.26,.14].forEach(r=>{g.beginPath();g.arc(n/2,n/2,n*r,0,7);g.stroke()});g.fillStyle='#f59e0b';g.beginPath();g.arc(n*.56,n*.47,n*.05,0,7);g.fill();return c.toDataURL()};
+const m={name:'BullScore',short_name:'BullScore',start_url:location.href.split('#')[0],display:'standalone',background_color:'#0f172a',theme_color:'#0f172a',icons:[192,512].map(s=>({src:ic(s),sizes:s+'x'+s,type:'image/png',purpose:'any'}))};
+const l=document.createElement('link');l.rel='manifest';l.href='data:application/manifest+json,'+encodeURIComponent(JSON.stringify(m));document.head.appendChild(l);
+const a=document.createElement('link');a.rel='apple-touch-icon';a.href=ic(180);document.head.appendChild(a);
+if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{})}
+open().then(all).then(r=>{S.p=r.filter(x=>x.k=='p');S.s=r.filter(x=>x.k=='s');S.act=r.find(x=>x.id=='meta')?.act||S.p[0]?.id;render();pwa()}).catch(()=>{render();pwa()});
+</script></body></html>
